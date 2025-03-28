@@ -1,0 +1,18 @@
+# 忽略所有的 log 檔案
+*.log
+
+# 忽略 Python 的編譯檔案
+*.pyc
+__pycache__/
+
+# 忽略某些資料夾
+/tmp/
+/build/
+/causalconv1d/
+/mamba_main/
+/runs/
+/sample/
+/temp/
+
+# 忽略特定檔案
+secret_config.json

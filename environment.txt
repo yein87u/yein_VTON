@@ -1,0 +1,7 @@
+numpy
+opencv-python
+pycocotools
+Pillow
+cupy
+tqdm
+mlflow
