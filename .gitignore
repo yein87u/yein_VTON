@@ -10,6 +10,7 @@ __pycache__/
 /build/
 /causalconv1d/
 /mamba_main/
+/triton/
 /runs/
 /sample/
 /temp/
