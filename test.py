@@ -24,6 +24,8 @@ print(torchvision.__version__)
 # 檢查 GPU 資訊
 if torch.cuda.is_available():
     print("GPU Name:", torch.cuda.get_device_name(0))
+import triton
+print("triton.__version__: ", triton.__version__)
 
 '''顯示圖片'''
 # import matplotlib.pyplot as plt
@@ -138,3 +140,33 @@ if torch.cuda.is_available():
 # model = AttU_Net(38, 3)
 # total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 # print(f"AttU_Net 的可訓練參數量: {total_params}")
+
+
+from models.LightMUNet import LightMUNet
+from options.train_options import TrainOptions
+from models.networks import ResUnetGenerator
+
+def count_parameters(model):
+    total_params = 0
+    for param in model.parameters():
+        total_params += param.numel()  # numel() returns the total number of elements in the tensor
+    return total_params
+
+# 創建你的 LightMUNet 模型實例
+model = LightMUNet(spatial_dims=2, init_filters=8, in_channels=1, out_channels=2)
+
+# 計算總參數量
+total_params = count_parameters(model)
+print(f"Total number of parameters in LightMUNet: {total_params}")
+
+
+
+opt = TrainOptions().parse()
+opt.warproot = 'C:\\Users\\User\\Desktop\\yein_VTON\\sample\\test_warping\\result\\train'
+opt.segroot = 'c:\\Users\\User\\Desktop\\yein_VTON\\sample\\test_warping\\seg\\train'
+# 創建 ResUnetGenerator 模型實例
+model2 = ResUnetGenerator(input_nc=3, output_nc=3, num_downs=8, opt=opt)
+
+# 計算總參數量
+total_param2 = count_parameters(model2)
+print(f"Total number of parameters in ResUnetGenerator: {total_param2}")

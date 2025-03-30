@@ -10,10 +10,11 @@ __pycache__/
 /build/
 /causalconv1d/
 /mamba_main/
-/triton/
+/triton_main/
 /runs/
 /sample/
 /temp/
 
 # 忽略特定檔案
 secret_config.json
+*.whl

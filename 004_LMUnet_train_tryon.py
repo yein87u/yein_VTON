@@ -13,8 +13,9 @@ from data import aligned_dataset
 from torch.utils.data import DataLoader
 from torch.utils.checkpoint import checkpoint
 from torch.utils.tensorboard import SummaryWriter
-from models import LightMUNet
+from models.LightMUNet import LightMUNet
 from models.networks import ResUnetGenerator, SpectralDiscriminator, load_checkpoint_parallel, VGGLoss, GANLoss, set_requires_grad, save_checkpoint
+from monai.utils import UpsampleMode
 
 def CreateDataset(opt):
     dataset = aligned_dataset.AlignedDataset()
@@ -52,7 +53,7 @@ gen_model = LightMUNet(
     use_conv_final=True,     # 是否使用最終卷積
     blocks_down=(1, 2, 2, 4), # 下採樣層數（可調整）
     blocks_up=(1, 1, 1),     # 上採樣層數（可調整）
-    upsample_mode="NONTRAINABLE"  # 預設上採樣模式
+    upsample_mode=UpsampleMode.NONTRAINABLE  # 預設上採樣模式
 )
 gen_model.train()
 gen_model.cuda()
@@ -120,6 +121,7 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
         arms_color = data['arms_color'].cuda()
         arms_neck_label= data['arms_neck_lable'].cuda()
         pose = data['pose'].cuda()
+        background_color = data['background_color'].cuda()
 
         gen_inputs = torch.cat([preserve_region, warped_cloth, warped_prod_edge, arms_neck_label, arms_color, pose], 1)
 
@@ -127,11 +129,12 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
         p_rendered, m_composite = torch.split(gen_outputs, [3, 1], 1)
         p_rendered = torch.tanh(p_rendered)
         m_composite = torch.sigmoid(m_composite)
-        m_composite1 = m_composite * warped_prod_edge
-        if opt.dataset == 'vitonhd':
-            m_composite =  person_clothes_edge.cuda()*m_composite1
-        elif opt.dataset == 'dresscode':
-            m_composite =  m_composite1
+        warped_cloth_mask = (warped_cloth > 0.2).float()
+        m_composite = m_composite * warped_cloth_mask
+        preserve_rendered = p_rendered * (1 - m_composite)
+        # 獲取背景顏色並填補空缺
+        filled_background = background_color * m_composite
+        preserve_rendered += filled_background 
         p_tryon = warped_cloth * m_composite + p_rendered * (1 - m_composite)
 
         set_requires_grad(discriminator, True)
@@ -185,7 +188,7 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
                 vis_pose.device).to(vis_pose.dtype)
             h = torch.cat([vis_pose, vis_pose, vis_pose], 1)
             i = p_rendered
-            j = torch.cat([m_composite1, m_composite1, m_composite1], 1)
+            j = m_composite
             k = p_tryon
 
             l = torch.cat([arms_neck_label,arms_neck_label,arms_neck_label],1)
