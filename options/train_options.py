@@ -7,6 +7,7 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--PBAFN_warp_checkpoint', type=str, help='從指定位置讀取預訓練位置')
         self.parser.add_argument('--pretrain_checkpoint_D', type=str, help='從指定位置載入預訓練模型')
         self.parser.add_argument('--PBAFN_gen_checkpoint', type=str, help='load the pretrained model from the specified location')
+        self.parser.add_argument('--PBAFN_gen_LMUnet_checkpoint', type=str, help='load the pretrained model from the specified location')
 
         self.parser.add_argument('--local_rank', type=int, default=0, help='進行分布式訓練時的CPU編號')
 

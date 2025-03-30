@@ -599,6 +599,41 @@ class AlignedDataset():
             AMC_tensor = torch.FloatTensor(arms_color)  # 將np陣列轉成torch張量
             AMC_tensor = AMC_tensor / 127.5 - 1.0   #標準化[-1, 1]
 
+            '''提取背景顏色'''
+            # 假設 parsing_np 是分割圖像，0 代表背景
+            background_mask_np = (parsing_np == 0).astype(np.uint8)    # 用分割結果生成背景遮罩
+            P_np_resized_background = cv2.resize(P_np, (background_mask_np.shape[1], background_mask_np.shape[0])) # 修改圖像大小
+
+            # 將遮罩應用到原始圖像，只保留背景區域的 RGB 值
+            background = background_mask_np * P_np_resized_background
+
+            # 將三維的 RGB 轉換為一維向量
+            background_r = background[..., 0].reshape((-1))
+            background_g = background[..., 1].reshape((-1))
+            background_b = background[..., 2].reshape((-1))
+
+            # 過濾出每個通道中非零值的索引，以便後續統計背景顏色的有效像素
+            background_r_valid_index = np.where(background_r > 0)[0]
+            background_g_valid_index = np.where(background_g > 0)[0]
+            background_b_valid_index = np.where(background_b > 0)[0]
+
+            # 分別計算 R, G, B 中位數或平均值，作為背景顏色
+            background_r_median = np.median(background_r[background_r_valid_index])
+            background_g_median = np.median(background_g[background_g_valid_index])
+            background_b_median = np.median(background_b[background_b_valid_index])
+
+            # 根據計算的顏色創建背景顏色張量
+            background_r = np.ones_like(parsing_np[..., 0:1]) * background_r_median
+            background_g = np.ones_like(parsing_np[..., 0:1]) * background_g_median
+            background_b = np.ones_like(parsing_np[..., 0:1]) * background_b_median
+
+            # 合併 R, G, B 通道並轉換為 (channel, height, width)
+            background_color = np.concatenate([background_r, background_g, background_b], 2).transpose(2, 0, 1)
+
+            # 將 numpy 陣列轉換為 torch 張量
+            background_color_tensor = torch.FloatTensor(background_color)
+            background_color_tensor = background_color_tensor / 127.5 - 1.0   # 標準化到 [-1, 1] 範圍
+
             '''warped clothes'''
             warped_name = person_id + '___' + cloth_id[:-4] +'.png'   # 00057_00.jpg___11274_00.png
             warped_path = os.path.join(self.warproot, warped_name)
@@ -663,6 +698,7 @@ class AlignedDataset():
             input_dict['warped_edge'] = WE_tensor
             input_dict['arms_color'] = AMC_tensor
             input_dict['arms_neck_lable'] = ANL_tensor
+            input_dict['background_color'] = background_color_tensor
 
         return input_dict
 

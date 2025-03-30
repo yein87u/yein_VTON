@@ -13,7 +13,7 @@ from data import aligned_dataset
 from torch.utils.data import DataLoader
 from torch.utils.checkpoint import checkpoint
 from torch.utils.tensorboard import SummaryWriter
-from models import AFWM
+from models import LightMUNet
 from models.networks import ResUnetGenerator, SpectralDiscriminator, load_checkpoint_parallel, VGGLoss, GANLoss, set_requires_grad, save_checkpoint
 
 def CreateDataset(opt):
@@ -26,8 +26,8 @@ opt = TrainOptions().parse()
 opt.warproot = 'C:\\Users\\User\\Desktop\\yein_VTON\\sample\\test_warping\\result\\train'
 opt.segroot = 'c:\\Users\\User\\Desktop\\yein_VTON\\sample\\test_warping\\seg\\train'
 
-run_path = 'runs/train_tryon/'+opt.name         # 'runs/flow'
-sample_path = 'sample/train_tryon/'+opt.name    # 'sample/flow'
+run_path = 'runs/train_tryon/LMUnet/'+opt.name         # 'runs/flow'
+sample_path = 'sample/train_tryon/LMUnet/'+opt.name    # 'sample/flow'
 os.makedirs(run_path, exist_ok=True)
 os.makedirs(sample_path, exist_ok=True)
 iter_path = os.path.join(opt.checkpoints_dir, opt.name, 'iter.txt')
@@ -41,12 +41,24 @@ train_data = CreateDataset(opt)     # 11632 不是 11647是因為batchsize分割
 train_loader = DataLoader(train_data, batch_size=opt.batchSize, shuffle=True, num_workers=0, pin_memory=True)
 dataset_size = len(train_loader)    # 727
 
-gen_model = ResUnetGenerator(36, 4, 5, ngf=64, norm_layer=nn.BatchNorm2d, opt=opt)
+gen_model = LightMUNet(
+    spatial_dims=2,          # 2D U-Net
+    init_filters=64,         # 與 ngf=64 相同
+    in_channels=36,          # 輸入通道數
+    out_channels=4,          # 輸出通道數
+    dropout_prob=None,
+    act=("RELU", {"inplace": True}),  # 預設激活函數
+    norm=("BATCH", {}),      # BatchNorm2d
+    use_conv_final=True,     # 是否使用最終卷積
+    blocks_down=(1, 2, 2, 4), # 下採樣層數（可調整）
+    blocks_up=(1, 1, 1),     # 上採樣層數（可調整）
+    upsample_mode="NONTRAINABLE"  # 預設上採樣模式
+)
 gen_model.train()
 gen_model.cuda()
 
 if opt.PBAFN_gen_checkpoint is not None:
-    load_checkpoint_parallel(gen_model, opt.PBAFN_gen_checkpoint)
+    load_checkpoint_parallel(gen_model, opt.PBAFN_gen_LMUnet_checkpoint)
 
 
 # if opt.isTrain and len(opt.gpu_ids):
@@ -108,19 +120,18 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
         arms_color = data['arms_color'].cuda()
         arms_neck_label= data['arms_neck_lable'].cuda()
         pose = data['pose'].cuda()
-        background_color = data['background_color'].cuda()
+
         gen_inputs = torch.cat([preserve_region, warped_cloth, warped_prod_edge, arms_neck_label, arms_color, pose], 1)
 
         gen_outputs = gen_model(gen_inputs)
         p_rendered, m_composite = torch.split(gen_outputs, [3, 1], 1)
         p_rendered = torch.tanh(p_rendered)
         m_composite = torch.sigmoid(m_composite)
-        warped_cloth_mask = (warped_cloth > 0.2).float()
-        m_composite = m_composite * warped_cloth_mask
-        preserve_rendered = p_rendered * (1 - m_composite)
-        # 獲取背景顏色並填補空缺
-        filled_background = background_color * m_composite
-        preserve_rendered += filled_background 
+        m_composite1 = m_composite * warped_prod_edge
+        if opt.dataset == 'vitonhd':
+            m_composite =  person_clothes_edge.cuda()*m_composite1
+        elif opt.dataset == 'dresscode':
+            m_composite =  m_composite1
         p_tryon = warped_cloth * m_composite + p_rendered * (1 - m_composite)
 
         set_requires_grad(discriminator, True)
@@ -174,18 +185,18 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
                 vis_pose.device).to(vis_pose.dtype)
             h = torch.cat([vis_pose, vis_pose, vis_pose], 1)
             i = p_rendered
-            # j = torch.cat([m_composite1, m_composite1, m_composite1], 1)
-            j = m_composite
+            j = torch.cat([m_composite1, m_composite1, m_composite1], 1)
             k = p_tryon
 
             l = torch.cat([arms_neck_label,arms_neck_label,arms_neck_label],1)
-            
+
             combine = torch.cat([a[0], h[0], g[0], f[0], l[0], ff[0], e[0], j[0], i[0], k[0]], 2).squeeze()
             cv_img = (combine.permute(1, 2, 0).detach().cpu().numpy()+1)/2
             writer.add_image('combine', (combine.data + 1) / 2.0, step)
             rgb = (cv_img*255).astype(np.uint8)
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-            cv2.imwrite('sample/train_tryon/result/'+str(epoch) + '_'+str(step)+'.jpg', bgr)
+            os.makedirs('sample/train_tryon/LMUnet/result/', exist_ok=True)
+            cv2.imwrite('sample/train_tryon/LMUnet/result/'+str(epoch) + '_'+str(step)+'.jpg', bgr)
             result_out = False
 
         step += 1
@@ -214,8 +225,8 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
     if epoch % opt.save_epoch_freq == 0:
       if opt.local_rank == 0:
         print('saving the model at the end of epoch %d, iters %d' % (epoch, total_steps))        
-        save_checkpoint(gen_model, os.path.join(opt.checkpoints_dir, opt.name, 'PBAFN_tryon_gen_epoch_%03d.pth' % (epoch+1)))
-        save_checkpoint(discriminator, os.path.join(opt.checkpoints_dir, opt.name, 'PBAFN_tryon_D_epoch_%03d.pth' % (epoch+1)))
+        save_checkpoint(gen_model, os.path.join(opt.checkpoints_dir, opt.name, 'PBAFN_tryon_gen_LMUnet_epoch_%03d.pth' % (epoch+1)))
+        save_checkpoint(discriminator, os.path.join(opt.checkpoints_dir, opt.name, 'PBAFN_tryon_D_LMUnet_epoch_%03d.pth' % (epoch+1)))
     if epoch > opt.niter:
         discriminator.module.update_learning_rate_warp(optimizer_D)
         gen_model.module.update_learning_rate(optimizer_gen)

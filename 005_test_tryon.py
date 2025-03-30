@@ -124,6 +124,7 @@ with torch.no_grad():
         arms_neck_label= data['arms_neck_lable'].cuda()
         pose = data['pose'].cuda()
         real_image = data['image'].cuda()
+        background_color = data['background_color'].cuda()
 
         gen_inputs = torch.cat([preserve_region, warped_cloth, warped_prod_edge, arms_neck_label, arms_color, pose], 1)
 
@@ -131,20 +132,25 @@ with torch.no_grad():
         p_rendered, m_composite = torch.split(gen_outputs, [3, 1], 1)
         p_rendered = torch.tanh(p_rendered)
         m_composite = torch.sigmoid(m_composite)
-        m_composite = m_composite * warped_prod_edge
+        warped_cloth_mask = (warped_cloth > 0.2).float()
+        m_composite = m_composite * warped_cloth_mask
+        preserve_rendered = p_rendered * (1 - m_composite)
+        # 獲取背景顏色並填補空缺
+        filled_background = background_color * m_composite
+        preserve_rendered += filled_background 
         p_tryon = warped_cloth * m_composite + p_rendered * (1 - m_composite)
         k = p_tryon
 
         bz = pose.size(0)
         for bb in range(bz):
+            cloth_id = data['cloth_id'][bb]
+            person_id = data['person_id'][bb]
             combine = k[bb].squeeze()
         
             cv_img = (combine.permute(1, 2, 0).detach().cpu().numpy()+1)/2
             rgb = (cv_img*255).astype(np.uint8)
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
-            cloth_id = data['cloth_id'][bb]
-            person_id = data['person_id'][bb]
             save_path = 'C:\\Users\\User\\Desktop\\yein_VTON\\sample\\test_tryon\\result\\'+person_id+'___'+cloth_id[:-4]+'.png'
             path_fid = 'C:\\Users\\User\\Desktop\\yein_VTON\\sample\\test_tryon\\fake_images\\'+person_id
             os.makedirs('C:\\Users\\User\\Desktop\\yein_VTON\\sample\\test_tryon\\result\\', exist_ok = True)
