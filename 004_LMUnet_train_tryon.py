@@ -44,20 +44,15 @@ dataset_size = len(train_loader)    # 727
 
 gen_model = LightMUNet(
     spatial_dims=2,          # 2D U-Net
-    init_filters=64,         # 與 ngf=64 相同
+    init_filters=8,         # 與 ngf=64 相同
     in_channels=36,          # 輸入通道數
     out_channels=4,          # 輸出通道數
-    dropout_prob=None,
-    act=("RELU", {"inplace": True}),  # 預設激活函數
-    norm=("BATCH", {}),      # BatchNorm2d
-    use_conv_final=True,     # 是否使用最終卷積
-    blocks_down=(1, 2, 2, 4), # 下採樣層數（可調整）
-    blocks_up=(1, 1, 1),     # 上採樣層數（可調整）
-    upsample_mode=UpsampleMode.NONTRAINABLE  # 預設上採樣模式
+    blocks_down=[1, 1, 1, 1],
+    blocks_up=[1, 1, 1],
 )
 gen_model.train()
 gen_model.cuda()
-
+gen_model.to(device)
 if opt.PBAFN_gen_checkpoint is not None:
     load_checkpoint_parallel(gen_model, opt.PBAFN_gen_LMUnet_checkpoint)
 
@@ -106,46 +101,47 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
     if epoch != start_epoch:
         epoch_iter = epoch_iter % dataset_size
 
+    loss_all = 0
     for i, data in enumerate(tqdm(train_loader, desc="Training Tryon", total=len(train_loader))):
         iter_start_time = time.time()
 
         total_steps += 1
         epoch_iter += 1
 
-        person_clothes_edge = data['person_clothes_mask'].cuda()
-        real_image = data['image'].cuda()
-        preserve_mask = data['preserve_mask3'].cuda()
+        person_clothes_edge = data['person_clothes_mask'].to(device)
+        real_image = data['image'].to(device)
+        preserve_mask = data['preserve_mask3'].to(device)
         preserve_region = real_image * preserve_mask
-        warped_cloth = data['warped_cloth'].cuda()
-        warped_prod_edge = data['warped_edge'].cuda()
-        arms_color = data['arms_color'].cuda()
-        arms_neck_label= data['arms_neck_lable'].cuda()
-        pose = data['pose'].cuda()
-        background_color = data['background_color'].cuda()
+        warped_cloth = data['warped_cloth'].to(device)
+        warped_prod_edge = data['warped_edge'].to(device)
+        arms_color = data['arms_color'].to(device)
+        arms_neck_label= data['arms_neck_lable'].to(device)
+        pose = data['pose'].to(device)
+        background_color = data['background_color'].to(device)
+        cloth_id = data['cloth_id']
+        person_id = data['person_id']
 
         gen_inputs = torch.cat([preserve_region, warped_cloth, warped_prod_edge, arms_neck_label, arms_color, pose], 1)
-
         gen_outputs = gen_model(gen_inputs)
+        print(gen_outputs[0].shape)
+
         p_rendered, m_composite = torch.split(gen_outputs, [3, 1], 1)
         p_rendered = torch.tanh(p_rendered)
         m_composite = torch.sigmoid(m_composite)
-        warped_cloth_mask = (warped_cloth > 0.2).float()
-        m_composite = m_composite * warped_cloth_mask
-        preserve_rendered = p_rendered * (1 - m_composite)
-        # 獲取背景顏色並填補空缺
-        filled_background = background_color * m_composite
-        preserve_rendered += filled_background 
+        m_composite1 = m_composite * warped_prod_edge
+        m_composite =  person_clothes_edge.cuda()*m_composite1
         p_tryon = warped_cloth * m_composite + p_rendered * (1 - m_composite)
-
+        
         set_requires_grad(discriminator, True)
         optimizer_D.zero_grad()
         pred_seg_D = p_rendered
         D_in_fake = torch.cat([gen_inputs, pred_seg_D.detach()], 1)
         D_in_real = torch.cat([gen_inputs, real_image], 1)
-        loss_gan_D = (criterionLSGANloss(discriminator(
-            D_in_fake), False) + criterionLSGANloss(discriminator(D_in_real), True)) * 0.5
+        loss_gan_D = (criterionLSGANloss(discriminator(D_in_fake), False) + 
+                      criterionLSGANloss(discriminator(D_in_real), True)) * 0.5
         loss_gan_D.backward()
         optimizer_D.step()
+        torch.cuda.empty_cache()
         set_requires_grad(discriminator, False)
 
         D_in_fake_G = torch.cat([gen_inputs, pred_seg_D], 1)
@@ -169,11 +165,22 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
                 writer.add_scalar('gen_GAN_G_loss', loss_gan_G, step)
                 writer.add_scalar('gen_GAN_D_loss', loss_gan_D, step)
 
-        loss_all =  gen_loss + loss_gan_G
+        loss_all +=  (gen_loss + loss_gan_G)
+        print(f"loss_all: {loss_all.item()}")
 
         optimizer_gen.zero_grad()
-        loss_all.backward()
+        print("test1")
+        import time
+        start_time = time.time()
+        import torch.autograd.profiler as profiler
+
+        with profiler.profile(use_cuda=True) as prof:   
+            loss_all.backward()
+
+        print(prof.key_averages().table(sort_by="self_cpu_time_total"))
+        print("Backward time:", time.time() - start_time)
         optimizer_gen.step()
+        torch.cuda.empty_cache()
 
         ############## Display results and errors ##########
         if result_out:
@@ -188,7 +195,7 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
                 vis_pose.device).to(vis_pose.dtype)
             h = torch.cat([vis_pose, vis_pose, vis_pose], 1)
             i = p_rendered
-            j = m_composite
+            j = torch.cat([m_composite1, m_composite1, m_composite1], 1)
             k = p_tryon
 
             l = torch.cat([arms_neck_label,arms_neck_label,arms_neck_label],1)

@@ -14,7 +14,8 @@ __pycache__/
 /runs/
 /sample/
 /temp/
-
+/checkpoints/
 # 忽略特定檔案
 secret_config.json
 *.whl
+*.pth

@@ -18,7 +18,7 @@ class BaseOptions():
         self.parser.add_argument('--name', type=str, default='flow', help='實驗名稱，儲存樣本與模型')   
         
         self.parser.add_argument('--num_gpus', type=int, default=1, help='GPU數量')
-        self.parser.add_argument('--batchSize', type=int, default=2, help='批次大小')
+        self.parser.add_argument('--batchSize', type=int, default=1, help='批次大小')
         self.parser.add_argument('--image_size', type=int, default=512, help='模型在訓練和推理過程中處理的圖像大小')
         self.parser.add_argument('--loadSize', type=int, default=512, help='將影像縮放至此尺寸')
         self.parser.add_argument('--fineSize', type=int, default=512, help='圖片裁切至此尺寸')
