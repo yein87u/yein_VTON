@@ -10,6 +10,7 @@ from monai.networks.blocks.segresnet_block import ResBlock, get_conv_layer, get_
 from monai.networks.layers.factories import Dropout
 from monai.networks.layers.utils import get_act_layer, get_norm_layer
 from monai.utils import UpsampleMode
+import torch._dynamo
 
 from mamba_main.mamba_ssm.modules.mamba_simple import Mamba
 
@@ -21,10 +22,11 @@ def get_dwconv_layer(
                              strides=stride, kernel_size=kernel_size, bias=bias, conv_only=True, groups=in_channels)
     point_conv = Convolution(spatial_dims=spatial_dims, in_channels=in_channels, out_channels=out_channels, 
                              strides=stride, kernel_size=1, bias=bias, conv_only=True, groups=1)
+    print("!!!!!!!!!!!!1")
     return torch.nn.Sequential(depth_conv, point_conv)
 
 class MambaLayer(nn.Module):
-    def __init__(self, input_dim, output_dim, d_state = 16, d_conv = 4, expand = 2):
+    def __init__(self, input_dim, output_dim, d_state = 8, d_conv = 2, expand = 2):
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -47,10 +49,19 @@ class MambaLayer(nn.Module):
         img_dims = x.shape[2:]
         x_flat = x.reshape(B, C, n_tokens).transpose(-1, -2)
         x_norm = self.norm(x_flat)
+        
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        start_event.record()
         x_mamba = self.mamba(x_norm) + self.skip_scale * x_flat
+        end_event.record()
+        torch.cuda.synchronize()
+        print("Mamba Layer Time:", start_event.elapsed_time(end_event), "ms")
+
         x_mamba = self.norm(x_mamba)
         x_mamba = self.proj(x_mamba)
         out = x_mamba.transpose(-1, -2).reshape(B, self.output_dim, *img_dims)
+        print("!!!!!!!!!!!!2")
         return out
 
 
@@ -63,6 +74,7 @@ def get_mamba_layer(
             return nn.Sequential(mamba_layer, nn.MaxPool2d(kernel_size=stride, stride=stride))
         if spatial_dims==3:
             return nn.Sequential(mamba_layer, nn.MaxPool3d(kernel_size=stride, stride=stride))
+    print("!!!!!!!!!!!!3")
     return mamba_layer
 
 
@@ -112,7 +124,9 @@ class ResMambaBlock(nn.Module):
         x = self.conv2(x)
 
         x += identity
+        print(f"identity.requires_grad: {identity.requires_grad}")
 
+        print("!!!!!!!!!!!!4")
         return x
 
 
@@ -156,6 +170,7 @@ class ResUpBlock(nn.Module):
         x = self.conv(x) + self.skip_scale * identity
         x = self.norm2(x)
         x = self.act(x)
+        print("!!!!!!!!!!!!5")
         return x
 
 

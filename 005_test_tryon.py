@@ -89,7 +89,7 @@ torch.cuda.set_device(opt.local_rank)
 
 device = torch.device(f'cuda:{opt.local_rank}')
 
-opt.PBAFN_gen_checkpoint = 'C:\\Users\\User\\Desktop\\yein_VTON\\checkpoints\\flow\\PBAFN_tryon_gen_epoch_041.pth'
+opt.PBAFN_gen_checkpoint = 'C:\\Users\\User\\Desktop\\yein_VTON\\checkpoints\\flow\\PBAFN_tryon_gen_epoch_016.pth'
 opt.warproot = 'C:\\Users\\User\\Desktop\\yein_VTON\\sample\\test_warping\\result\\test'
 opt.segroot = 'c:\\Users\\User\\Desktop\\yein_VTON\\sample\\test_warping\\seg\\test'
 
@@ -104,13 +104,6 @@ load_checkpoint_parallel(gen_model, opt.PBAFN_gen_checkpoint)
 
 gen_model = gen_model.to(device)
 gen_model.eval()
-
-lpips_fn = LPIPS(net='vgg', verbose=False).to(device)
-val_pred_y = []
-lpips = []
-ssim_scores = []
-fake_images = []
-real_images = []
 
 with torch.no_grad():
     for ii, data in enumerate(tqdm(test_loader)):
@@ -130,6 +123,7 @@ with torch.no_grad():
 
         gen_outputs = gen_model(gen_inputs)
         p_rendered, m_composite = torch.split(gen_outputs, [3, 1], 1)
+
         p_rendered = torch.tanh(p_rendered)
         m_composite = torch.sigmoid(m_composite)
         warped_cloth_mask = (warped_cloth > 0.2).float()
@@ -140,6 +134,10 @@ with torch.no_grad():
         preserve_rendered += filled_background 
         p_tryon = warped_cloth * m_composite + p_rendered * (1 - m_composite)
         k = p_tryon
+
+        
+        seg_path = 'C:\\Users\\User\\Desktop\\yein_VTON\\sample\\checkdata\\seg\\'+person_id[0]+'___'+cloth_id[0][:-4]+'.png'
+        os.makedirs('C:\\Users\\User\\Desktop\\yein_VTON\\sample\\checkdata\\result\\', exist_ok = True)
 
         bz = pose.size(0)
         for bb in range(bz):
@@ -158,48 +156,5 @@ with torch.no_grad():
 
             cv2.imwrite(save_path, bgr)
             cv2.imwrite(path_fid, bgr)
-
-            # 評估
-            # fake_img = normalize_img(combine[bb]).to(device)   # (C, H, W)
-            # real_img = normalize_img(real_image[bb]).to(device)   # (C, H, W)
-
-            fake_img = combine.to(device)
-            real = real_image[bb].to(device)
-            
-            # img_tryon_out = cv2.cvtColor(img_tryon_np, cv2.COLOR_RGB2BGR)
-            # cv2.imwrite("C:\\Users\\User\\Desktop\\yein_VTON\\sample\\test_tryon\\fake_images", img_tryon_out)
-            
-            fake_images.append(fake_img.cpu())
-            real_images.append(real.cpu())
-
-            val_pred_y.append(combine[bb].detach().cpu())
-            lpips_score = lpips_fn(fake_img.to(device), real.to(device)).detach().cpu().item()
-            lpips.append(lpips_score)
-
-            # print(fake_img.shape)
-
-            ssim_value = ssim_fn(fake_img.unsqueeze(0), real.unsqueeze(0), size_average=True)
-            ssim_scores.append(ssim_value.item())
-
-            torch.cuda.empty_cache()  # 釋放記憶體
-
-    metrics = torch_fidelity.calculate_metrics(
-        input1="C:\\Users\\User\\Desktop\\yein_VTON\\sample\\test_tryon\\fake_images", # fake images
-        input2="D:\\VITON-HD\\VITON-HD1024_Origin\\test\\image", # real images
-        fid=True,
-    )
-    fid_score = metrics['frechet_inception_distance']
-
-        
-    val_pred_y = torch.cat(val_pred_y, dim=0)
-    lpips = torch.tensor(lpips)
-    print(datetime.now(), "- LPIPS: %.3f (+/- %.3f)" % (lpips.mean(), lpips.std()))
-
-    fid_score = metrics['frechet_inception_distance']
-    print(datetime.now(), "- FID: %.3f" % fid_score)
-
-    # 輸出 SSIM 結果
-    ssim_scores = torch.tensor(ssim_scores)
-    print(datetime.now(), "- SSIM: %.3f (+/- %.3f)" % (ssim_scores.mean(), ssim_scores.std()))
 
 

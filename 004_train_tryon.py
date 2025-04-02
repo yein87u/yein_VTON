@@ -45,6 +45,8 @@ gen_model = ResUnetGenerator(36, 4, 5, ngf=64, norm_layer=nn.BatchNorm2d, opt=op
 gen_model.train()
 gen_model.cuda()
 
+gen_model.to(device)
+
 if opt.PBAFN_gen_checkpoint is not None:
     load_checkpoint_parallel(gen_model, opt.PBAFN_gen_checkpoint)
 
@@ -99,7 +101,7 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
         total_steps += 1
         epoch_iter += 1
 
-        person_clothes_edge = data['person_clothes_mask'].cuda()
+        person_clothes_edge = data['person_clothes_mask'].cuda()    # 原服裝遮罩
         real_image = data['image'].cuda()
         preserve_mask = data['preserve_mask3'].cuda()
         preserve_region = real_image * preserve_mask
@@ -115,13 +117,16 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
         p_rendered, m_composite = torch.split(gen_outputs, [3, 1], 1)
         p_rendered = torch.tanh(p_rendered)
         m_composite = torch.sigmoid(m_composite)
-        warped_cloth_mask = (warped_cloth > 0.2).float()
-        m_composite = m_composite * warped_cloth_mask
-        preserve_rendered = p_rendered * (1 - m_composite)
-        # 獲取背景顏色並填補空缺
-        filled_background = background_color * m_composite
-        preserve_rendered += filled_background 
+        m_composite = m_composite * warped_prod_edge #
+        m_composite =  person_clothes_edge.cuda()*m_composite
+
+        # preserve_rendered = p_rendered * (1 - m_composite)
+        # # 獲取背景顏色並填補空缺
+        # filled_background = background_color * m_composite
+        # preserve_rendered += filled_background 
         p_tryon = warped_cloth * m_composite + p_rendered * (1 - m_composite)
+
+
 
         set_requires_grad(discriminator, True)
         optimizer_D.zero_grad()
